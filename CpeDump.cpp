@@ -279,6 +279,7 @@ public:
                 u32 addr = 0;
                 mFileStream.Read(addr);
 
+                // The lowest starting data is the base address
                 if (baseAddress == 0 || addr < baseAddress)
                 {
                     baseAddress = addr;
@@ -388,8 +389,38 @@ public:
     }
 
 private:
+    void ValidateProgramCounter(u32 pcReg)
+    {
+        const static u32 kBiosReserved = 64 * 1024;
+        const static u32 k2MbRam = 2048 * 1024;
+        const static u32 k8MbRam = 8192 * 1024;
 
-    void WriteExe(const char* fileName, u32 pcReg, u32 baseAddress, const std::map<u32, std::vector<u8>>& data)
+        if (
+            // Main ram - assume 2MB (can be modded up to 8MB)
+            (pcReg >= 0x0 + kBiosReserved && pcReg <= 0x0 + k2MbRam) ||
+            (pcReg >= 0x80000000 + kBiosReserved && pcReg <= 0x80000000 + k2MbRam) ||
+            (pcReg >= 0xA0000000 + kBiosReserved && pcReg <= 0xA0000000 + k2MbRam) ||
+
+            // Expansion Region 1 - assume 8MB (max)
+            (pcReg >= 0x1F000000 && pcReg <= 0x1F000000 + k8MbRam) ||
+            (pcReg >= 0x9F000000 && pcReg <= 0x9F000000 + k8MbRam) ||
+            (pcReg >= 0xBF000000 && pcReg <= 0xBF000000 + k8MbRam) ||
+
+            // Expansion Region 3 - assume 2MB (max)
+            (pcReg >= 0x1FA00000 && pcReg <= 0x1FA00000 + k2MbRam) ||
+            (pcReg >= 0x9FA00000 && pcReg <= 0x9FA00000 + k2MbRam) ||
+            (pcReg >= 0xBFA00000 && pcReg <= 0xBFA00000 + k2MbRam)
+            )
+        {
+            // Seems to fall within a known valid range
+        }
+        else
+        {
+            std::cout << "WARNING: Program counter value doesn't appear in a valid memory range 0x" << std::hex << pcReg << std::endl;
+        }
+    }
+
+    void WriteExe(const char* fileName, u32 pcReg, u32 baseAddress, const std::map<u32, std::vector<u8>>& offsetToRawDataBlocks)
     {
         PSExeHeader header = {};
         memcpy(&header.id, kPsxExe, sizeof(kPsxExe));
@@ -398,10 +429,13 @@ private:
         header.t_addr = baseAddress;
         header.pc0 = pcReg;
 
+        // TODO: Validate base address
+        // TODO: Validate total output size is <= 8 MB, if not then print biggest diff between sections
+
         CpeDumper::FileStream fs(fileName, CpeDumper::FileStream::ReadMode::ReadWrite);
 
         u32 fileSize = 0;
-        for (const auto& item : data)
+        for (const auto& item : offsetToRawDataBlocks)
         {
             // All data starts in sector 1 as sector 0 contains the PSX-EXE header
             const u32 targetPos = (item.first - baseAddress) + kSectorSize;
@@ -432,6 +466,8 @@ private:
 
         fs.Seek(0);
         header.Write(fs);
+
+        ValidateProgramCounter(pcReg);
     }
 
     CpeDumper::FileStream mFileStream;
